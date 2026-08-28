@@ -51,7 +51,8 @@ Users can already achieve this manually with a `type: cluster-ip` listener, self
 
 This proposal automates the N+1 `TCPRoute` resources and the advertised addresses.
 It does not provision the ports on the gateway.
-Users create the gateway listeners, and the recommended way to keep scale-up from racing with that step is to pre-provision a range of listeners with headroom, as described below.
+Users create the gateway listeners.
+One way to keep scale-up from racing with that step is to pre-provision a range of listeners with headroom, as in the example below.
 
 `TCPRoute` resources graduated to the _Standard_ channel and to the `v1` API version in Gateway API 1.6.0.
 
@@ -107,7 +108,7 @@ The user is therefore responsible for making sure the parent gateway has a TCP l
 Strimzi creates only the `TCPRoute` resources and the advertised addresses.
 When a broker is added whose advertised port has no gateway listener yet, that broker is not reachable until the listener exists, which is the same class of race as in the original issue.
 
-The recommended operational pattern is to pre-provision a range of gateway listeners with headroom, and let Strimzi attach and detach routes as brokers come and go:
+The following example pre-provisions a range of gateway listeners with headroom, and lets Strimzi attach and detach routes as brokers come and go:
 
 1. Choose the listener port, which is also the bootstrap port on the gateway, and a per-broker port formula that covers the node IDs the cluster will use, for example listener port `9094` and `9200 + {nodeId}` for node IDs `0` through `49`.
 2. Create those TCP listeners on the `Gateway`, or on a `ListenerSet` that attaches to it, including spare ports for the next scale-up.
@@ -130,8 +131,7 @@ A cluster with N brokers consumes N+1 listeners on that gateway, and both the Ga
 
 - A `Gateway` resource is limited to 64 listeners.
   Users who need more can contribute extra listeners through a `ListenerSet` they manage.
-- Cloud providers apply their own limits.
-  An AWS NLB supports at most 50 listeners and that quota is not adjustable, so `1 + N <= 50` and a single gateway supports at most 49 brokers.
+- Cloud load balancers often apply their own listener quotas as well.
   Any listeners the parent `Gateway` already defines, if they have routes attached, count against the same budget.
 
 These limits apply per listener and per gateway, not per cluster.
@@ -148,16 +148,9 @@ Conflicts and exhausted capacity surface as routes that are never accepted, and 
 
 ### Implementation support
 
-`TCPRoute` is an _Extended_ support feature, so support has to be verified per implementation.
-At the time of writing, the AWS Load Balancer Controller supports what this proposal needs:
-
-- Version 3.5.0 requires Gateway API 1.6 CRDs, serves `TCPRoute` at `gateway.networking.k8s.io/v1`, and passes Gateway API 1.6.0 conformance.
-- The `gateway.k8s.aws/nlb` GatewayClass provisions one NLB per `Gateway` and materialises one NLB listener for each gateway listener that has a route attached, which is exactly the model described above.
-
-Two implementation-specific details are worth noting for users of that controller, and will be mentioned in the documentation rather than modelled in the Strimzi API.
-Mixing protocol layers on one `Gateway` is not supported, so a gateway carrying Kafka traffic cannot also carry `HTTPRoute` resources.
-Target group settings such as `targetType`, TCP health checks, and deregistration delay can be set once as a gateway-level default through `LoadBalancerConfiguration.defaultTargetGroupConfiguration`, and every broker target group inherits them.
-That last point matters for the concern raised in the original issue, where the Envoy Gateway implementation needed a `BackendTrafficPolicy` resource per route: implementations differ in whether such tuning is per-route or inheritable, and Strimzi does not need to model implementation-specific policy resources in either case.
+`TCPRoute` is an _Extended_ support feature of the Gateway API.
+The Gateway implementation must support `TCPRoute`.
+Strimzi will not model implementation-specific policy resources.
 
 ### Strimzi API
 
@@ -193,7 +186,7 @@ metadata:
   name: kafka-gateway
   namespace: infra
 spec:
-  gatewayClassName: nlb
+  gatewayClassName: my-gateway-class
   listeners:
     - name: kafka-bootstrap
       protocol: TCP
@@ -403,8 +396,8 @@ If the Fabric8 release lags, the fallback is for Strimzi to carry the four `TCPR
 
 ### Testing strategy
 
-The listener will be covered by unit tests and manual testing.
-System tests are not covered by this proposal, for the same reasons given in SEP-136: several existing listener types rely on unit and manual testing only, and the value of system tests is limited when the behaviour depends on which Gateway API implementation is installed.
+The listener will be covered by unit tests.
+System tests are not covered by this proposal, for the same reasons given in SEP-136: the value of system tests is limited when the behaviour depends on which Gateway API implementation is installed.
 
 ## Out of scope
 
